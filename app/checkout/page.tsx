@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import {
   ArrowLeftIcon,
@@ -9,13 +9,230 @@ import {
   LockIcon,
 } from "../components/icons";
 
+type CardBrandId = "visa" | "mastercard" | "amex" | "discover";
+
+type CardBrand = {
+  id: CardBrandId;
+  name: string;
+  short: string;
+  maxDigits: number;
+  cvcLength: number;
+  numberPlaceholder: string;
+  cvcPlaceholder: string;
+};
+
+const cardBrands: CardBrand[] = [
+  {
+    id: "visa",
+    name: "Visa",
+    short: "VISA",
+    maxDigits: 16,
+    cvcLength: 3,
+    numberPlaceholder: "0000 0000 0000 0000",
+    cvcPlaceholder: "123",
+  },
+  {
+    id: "mastercard",
+    name: "Mastercard",
+    short: "MC",
+    maxDigits: 16,
+    cvcLength: 3,
+    numberPlaceholder: "0000 0000 0000 0000",
+    cvcPlaceholder: "123",
+  },
+  {
+    id: "amex",
+    name: "Amex",
+    short: "AMEX",
+    maxDigits: 15,
+    cvcLength: 4,
+    numberPlaceholder: "0000 000000 00000",
+    cvcPlaceholder: "1234",
+  },
+  {
+    id: "discover",
+    name: "Discover",
+    short: "DISC",
+    maxDigits: 16,
+    cvcLength: 3,
+    numberPlaceholder: "0000 0000 0000 0000",
+    cvcPlaceholder: "123",
+  },
+];
+
+function detectBrandFromDigits(digits: string): CardBrandId | null {
+  if (/^4/.test(digits)) return "visa";
+  if (/^(5[1-5]|2[2-7])/.test(digits)) return "mastercard";
+  if (/^3[47]/.test(digits)) return "amex";
+  if (/^(6011|65|64[4-9])/.test(digits)) return "discover";
+  return null;
+}
+
+function formatCardNumber(raw: string, brand: CardBrandId): string {
+  const maxDigits = brand === "amex" ? 15 : 16;
+  const digits = raw.replace(/\D/g, "").slice(0, maxDigits);
+
+  if (brand === "amex") {
+    const part1 = digits.slice(0, 4);
+    const part2 = digits.slice(4, 10);
+    const part3 = digits.slice(10, 15);
+    return [part1, part2, part3].filter(Boolean).join(" ");
+  }
+
+  return digits.replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+function formatExpiry(raw: string, previous: string): string {
+  const isDeleting = raw.length < previous.length;
+  let digits = raw.replace(/\D/g, "").slice(0, 4);
+
+  if (isDeleting && previous.endsWith("/") && raw === previous.slice(0, -1)) {
+    digits = digits.slice(0, -1);
+  }
+
+  if (digits.length === 0) return "";
+
+  if (digits.length === 1) {
+    if (Number(digits) > 1) {
+      return `0${digits}/`;
+    }
+    return digits;
+  }
+
+  let month = digits.slice(0, 2);
+  const monthNum = Number(month);
+  if (monthNum === 0) {
+    month = "01";
+  } else if (monthNum > 12) {
+    month = "12";
+  }
+
+  const year = digits.slice(2, 4);
+  if (digits.length === 2) {
+    return isDeleting ? month : `${month}/`;
+  }
+
+  return `${month}/${year}`;
+}
+
+function formatCvc(raw: string, brand: CardBrandId): string {
+  const maxLength = brand === "amex" ? 4 : 3;
+  return raw.replace(/\D/g, "").slice(0, maxLength);
+}
+
+function formatCardholder(raw: string): string {
+  return raw
+    .replace(/[^a-zA-ZÁÉÍÓÚáéíóúÑñÜü\s.-]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .toUpperCase();
+}
+
+function BrandMark({
+  brand,
+  active,
+}: {
+  brand: CardBrandId;
+  active: boolean;
+}) {
+  if (brand === "mastercard") {
+    return (
+      <svg viewBox="0 0 28 18" className="w-6 h-4 shrink-0" aria-hidden="true">
+        <circle cx="10.5" cy="9" r="6.5" fill="#EB001B" fillOpacity={active ? "0.95" : "0.85"} />
+        <circle cx="17.5" cy="9" r="6.5" fill="#F79E1B" fillOpacity={active ? "0.95" : "0.85"} />
+      </svg>
+    );
+  }
+
+  if (brand === "visa") {
+    return (
+      <span
+        className={`font-mono text-[10px] font-extrabold tracking-tighter italic px-1.5 py-0.5 rounded border ${
+          active
+            ? "bg-white/10 border-white/25 text-white"
+            : "bg-stone-100 border-stone-200 text-[#1A1F71]"
+        }`}
+      >
+        VISA
+      </span>
+    );
+  }
+
+  if (brand === "amex") {
+    return (
+      <span
+        className={`font-mono text-[10px] font-extrabold tracking-tight px-1.5 py-0.5 rounded border ${
+          active
+            ? "bg-sky-500/20 border-sky-400/40 text-sky-200"
+            : "bg-sky-50 border-sky-200 text-sky-800"
+        }`}
+      >
+        AMEX
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`font-mono text-[10px] font-extrabold tracking-tight px-1.5 py-0.5 rounded border ${
+        active
+          ? "bg-amber-500/20 border-amber-400/40 text-amber-200"
+          : "bg-amber-50 border-amber-200 text-amber-800"
+      }`}
+    >
+      DISC
+    </span>
+  );
+}
+
 export default function NetParkCheckout() {
   const [enviado, setEnviado] = useState(false);
+  const [marca, setMarca] = useState<CardBrandId>("visa");
+  const [empresa, setEmpresa] = useState("");
+  const [titular, setTitular] = useState("");
+  const [numeroTarjeta, setNumeroTarjeta] = useState("");
+  const [expiracion, setExpiracion] = useState("");
+  const [cvc, setCvc] = useState("");
+
+  const activeBrand =
+    cardBrands.find((item) => item.id === marca) ?? cardBrands[0];
+
+  function handleSelectBrand(nextBrand: CardBrandId) {
+    setMarca(nextBrand);
+    setNumeroTarjeta((prev) => formatCardNumber(prev, nextBrand));
+    setCvc((prev) => formatCvc(prev, nextBrand));
+  }
+
+  function handleCardNumberChange(e: ChangeEvent<HTMLInputElement>) {
+    const rawDigits = e.target.value.replace(/\D/g, "");
+    const detected = detectBrandFromDigits(rawDigits);
+    const resolvedBrand = detected ?? marca;
+
+    if (detected && detected !== marca) {
+      setMarca(detected);
+      setCvc((prev) => formatCvc(prev, detected));
+    }
+
+    setNumeroTarjeta(formatCardNumber(e.target.value, resolvedBrand));
+  }
+
+  function handleExpiryChange(e: ChangeEvent<HTMLInputElement>) {
+    setExpiracion((prev) => formatExpiry(e.target.value, prev));
+  }
+
+  function handleCvcChange(e: ChangeEvent<HTMLInputElement>) {
+    setCvc(formatCvc(e.target.value, marca));
+  }
+
+  function handleCardholderChange(e: ChangeEvent<HTMLInputElement>) {
+    setTitular(formatCardholder(e.target.value));
+  }
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setEnviado(true);
   }
+
+  const lastFour = numeroTarjeta.replace(/\D/g, "").slice(-4);
 
   return (
     <div className="min-h-screen bg-[#FAFAF9] text-[#111315] font-sans flex flex-col selection:bg-emerald-200 selection:text-[#111315]">
@@ -108,7 +325,21 @@ export default function NetParkCheckout() {
                   Solicitud de piloto registrada
                 </h2>
                 <p className="text-sm text-stone-600 max-w-md mx-auto leading-relaxed">
-                  Nuestro equipo técnico coordinará la conexión con tus cámaras IP en menos de 48 horas. Mientras tanto, puedes revisar cómo se ve el panel de auditoría diaria.
+                  Nuestro equipo técnico coordinará la conexión con tus cámaras IP en menos de 48 horas.
+                  {lastFour ? (
+                    <>
+                      {" "}
+                      Método respaldado con{" "}
+                      <span className="font-semibold text-[#111315]">
+                        {activeBrand.name}
+                      </span>{" "}
+                      terminada en{" "}
+                      <span className="font-mono font-semibold text-[#111315]">
+                        {lastFour}
+                      </span>
+                      .
+                    </>
+                  ) : null}
                 </p>
                 <div className="pt-4 flex flex-col sm:flex-row justify-center gap-3">
                   <Link
@@ -149,9 +380,44 @@ export default function NetParkCheckout() {
                     <input
                       id="empresa"
                       type="text"
+                      value={empresa}
+                      onChange={(e) => setEmpresa(e.target.value)}
                       placeholder="Ej. Parqueos San Salvador S.A."
+                      autoComplete="organization"
                       className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
                     />
+                  </div>
+
+                  <div>
+                    <span className="block text-xs font-mono uppercase tracking-wider text-stone-600 mb-2">
+                      Marca de tarjeta
+                    </span>
+                    <div
+                      role="radiogroup"
+                      aria-label="Marca de tarjeta de crédito"
+                      className="grid grid-cols-2 sm:grid-cols-4 gap-2.5"
+                    >
+                      {cardBrands.map((item) => {
+                        const isActive = item.id === marca;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={isActive}
+                            onClick={() => handleSelectBrand(item.id)}
+                            className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                              isActive
+                                ? "bg-[#111315] border-[#111315] text-white shadow-sm"
+                                : "bg-white border-stone-200 text-stone-700 hover:border-stone-400"
+                            }`}
+                          >
+                            <BrandMark brand={item.id} active={isActive} />
+                            <span>{item.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div>
@@ -164,8 +430,11 @@ export default function NetParkCheckout() {
                     <input
                       id="titular"
                       type="text"
-                      placeholder="Como aparece en el plástico"
-                      className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
+                      value={titular}
+                      onChange={handleCardholderChange}
+                      placeholder="NOMBRE APELLIDO"
+                      autoComplete="cc-name"
+                      className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm font-mono tracking-wide text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
                     />
                   </div>
 
@@ -181,16 +450,15 @@ export default function NetParkCheckout() {
                         id="tarjeta"
                         type="text"
                         inputMode="numeric"
-                        placeholder="0000 0000 0000 0000"
-                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 pr-24 text-sm font-mono text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
+                        autoComplete="cc-number"
+                        value={numeroTarjeta}
+                        onChange={handleCardNumberChange}
+                        maxLength={activeBrand.id === "amex" ? 17 : 19}
+                        placeholder={activeBrand.numberPlaceholder}
+                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 pr-20 text-sm font-mono tracking-wider text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
                       />
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-1.5 font-mono text-[10px] font-bold">
-                        <span className="bg-stone-100 text-stone-700 border border-stone-200 px-1.5 py-0.5 rounded">
-                          VISA
-                        </span>
-                        <span className="bg-stone-100 text-stone-700 border border-stone-200 px-1.5 py-0.5 rounded">
-                          MC
-                        </span>
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+                        <BrandMark brand={marca} active={false} />
                       </div>
                     </div>
                   </div>
@@ -207,8 +475,12 @@ export default function NetParkCheckout() {
                         id="expiracion"
                         type="text"
                         inputMode="numeric"
+                        autoComplete="cc-exp"
+                        value={expiracion}
+                        onChange={handleExpiryChange}
+                        maxLength={5}
                         placeholder="MM/AA"
-                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm font-mono text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
+                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm font-mono tracking-wider text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
                       />
                     </div>
                     <div>
@@ -216,14 +488,18 @@ export default function NetParkCheckout() {
                         htmlFor="cvc"
                         className="block text-xs font-mono uppercase tracking-wider text-stone-600 mb-1.5"
                       >
-                        CVC
+                        {activeBrand.id === "amex" ? "CID (4 dígitos)" : "CVC"}
                       </label>
                       <input
                         id="cvc"
                         type="text"
                         inputMode="numeric"
-                        placeholder="123"
-                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm font-mono text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
+                        autoComplete="cc-csc"
+                        value={cvc}
+                        onChange={handleCvcChange}
+                        maxLength={activeBrand.cvcLength}
+                        placeholder={activeBrand.cvcPlaceholder}
+                        className="w-full bg-white border border-stone-300 rounded-lg px-3.5 py-3 text-sm font-mono tracking-wider text-[#111315] placeholder:text-stone-400 focus:outline-none focus:border-[#111315] focus:ring-1 focus:ring-[#111315] transition-colors"
                       />
                     </div>
                   </div>
